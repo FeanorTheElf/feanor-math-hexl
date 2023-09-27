@@ -3,4 +3,4 @@
 extern crate cpp;
 extern crate feanor_math;
 
-mod bindings;
+pub mod hexl;
