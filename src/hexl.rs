@@ -40,7 +40,7 @@ cpp!{{
     }
 }}
 
-struct HEXLNTT<M: MemoryProvider<u64> = AllocatingMemoryProvider> {
+pub struct HEXLNTT<M: MemoryProvider<u64> = AllocatingMemoryProvider> {
     data: *mut c_void,
     ring: Zn,
     len: u64,
