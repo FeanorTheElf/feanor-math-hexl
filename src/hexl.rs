@@ -3,9 +3,9 @@ use feanor_math::divisibility::DivisibilityRingStore;
 use feanor_math::homomorphism::Homomorphism;
 use feanor_math::ring::{El, RingStore};
 use feanor_math::rings::zn::zn_64::{ZnBase, ZnEl};
-use feanor_math::rings::zn::ZnRingStore;
+use feanor_math::rings::zn::{ZnRing, ZnRingStore};
 use feanor_math::rings::zn::zn_64::Zn;
-use feanor_math::algorithms::unity_root::is_prim_root_of_unity_pow2;
+use feanor_math::algorithms::unity_root::{get_prim_root_of_unity_pow2, is_prim_root_of_unity_pow2};
 
 use std::ffi::c_void;
 use std::ops::DerefMut;
@@ -65,11 +65,23 @@ impl HEXLNTT {
         HEXLNTT { data: pointer, ring: ring, log2_n: log2_n, root_of_unity: root_of_unity }
     }
 
-    pub fn unordered_negacyclic_fft_base<const INV: bool>(&self, input: &[ZnEl], output: &mut [ZnEl]) {
+    pub fn for_zn(ring: Zn, log2_n: usize) -> Option<Self> {
+        let as_field = (&ring).as_field().ok().unwrap();
+        let root_of_unity = as_field.get_ring().unwrap_element(get_prim_root_of_unity_pow2(as_field, log2_n + 1)?);
+        return Some(Self::new(ring, log2_n, root_of_unity));
+    }
+
+    ///
+    /// The elements of input won't change their value, but might be reduced in-place.
+    /// 
+    pub fn unordered_negacyclic_fft_base<const INV: bool>(&self, input: &mut [ZnEl], output: &mut [ZnEl]) {
         assert_eq!(1 << self.log2_n, input.len());
         assert_eq!(1 << self.log2_n, output.len());
         assert_eq!(std::mem::size_of::<ZnEl>(), std::mem::size_of::<u64>());
         assert_eq!(std::mem::align_of::<ZnEl>(), std::mem::align_of::<u64>());
+        for x in &mut*input {
+            *x = self.ring.get_ring().from_int_promise_reduced(self.ring.smallest_positive_lift(*x));
+        }
         {
             let ptr = self.data;
             let input_ptr = unsafe { std::mem::transmute::<*const ZnEl, *const u64>(input.as_ptr()) };
@@ -105,6 +117,8 @@ impl Drop for HEXLNTT {
 
 #[cfg(test)]
 use feanor_math::assert_el_eq;
+#[cfg(test)]
+use test::Bencher;
 
 #[test]
 fn test_ntt() {
@@ -118,18 +132,18 @@ fn test_ntt() {
         let zero = fft.ring().zero();
 
         let mut values = [one, zero, zero, zero];
-        let original = values;
+        let mut original = values;
 
         // bitreversed order
         let expected = [one, one, one, one];
 
-        fft.unordered_negacyclic_fft_base::<false>(&original, &mut values);
+        fft.unordered_negacyclic_fft_base::<false>(&mut original, &mut values);
         for i in 0..4 {
             assert_el_eq!(fft.ring(), &expected[i], &values[i]);
         }
 
         let mut result = [zero; 4];
-        fft.unordered_negacyclic_fft_base::<true>(&values, &mut result);
+        fft.unordered_negacyclic_fft_base::<true>(&mut values, &mut result);
         for i in 0..4 {
             assert_el_eq!(fft.ring(), &original[i], &result[i]);
         }
@@ -142,18 +156,18 @@ fn test_ntt() {
         let zero = fft.ring().zero();
 
         let mut values = [zero, one, zero, zero];
-        let original = values;
+        let mut original = values;
 
         // bitreversed order
         let expected = [inv_z, ring.pow(inv_z, 5), ring.pow(inv_z, 3), ring.pow(inv_z, 7)];
 
-        fft.unordered_negacyclic_fft_base::<false>(&original, &mut values);
+        fft.unordered_negacyclic_fft_base::<false>(&mut original, &mut values);
         for i in 0..4 {
             assert_el_eq!(fft.ring(), &expected[i], &values[i]);
         }
 
         let mut result = [zero; 4];
-        fft.unordered_negacyclic_fft_base::<true>(&values, &mut result);
+        fft.unordered_negacyclic_fft_base::<true>(&mut values, &mut result);
         for i in 0..4 {
             assert_el_eq!(fft.ring(), &original[i], &result[i]);
         }
@@ -167,7 +181,7 @@ fn test_ntt() {
         let zero = fft.ring().zero();
 
         let mut values = [zero, one, one, zero, zero, zero, zero, zero];
-        let original = values;
+        let mut original = values;
 
         // bitreversed order
         let expected = [
@@ -181,15 +195,39 @@ fn test_ntt() {
             ring.add(ring.pow(inv_z, 15),ring.pow(inv_z, 30))
         ];
 
-        fft.unordered_negacyclic_fft_base::<false>(&original, &mut values);
+        fft.unordered_negacyclic_fft_base::<false>(&mut original, &mut values);
         for i in 0..4 {
             assert_el_eq!(fft.ring(), &expected[i], &values[i]);
         }
 
         let mut result = [zero; 8];
-        fft.unordered_negacyclic_fft_base::<true>(&values, &mut result);
+        fft.unordered_negacyclic_fft_base::<true>(&mut values, &mut result);
         for i in 0..4 {
             assert_el_eq!(fft.ring(), &original[i], &result[i]);
         }
     }
+}
+
+#[cfg(test)]
+fn run_fft_bench_round(fft: &HEXLNTT, data: &mut [ZnEl], ntt: &mut [ZnEl], inv_ntt: &mut [ZnEl]) {
+    fft.unordered_negacyclic_fft_base::<false>(data, ntt);
+    fft.unordered_negacyclic_fft_base::<true>(ntt, inv_ntt);
+    assert_el_eq!(fft.ring(), data[0], inv_ntt[0]);
+}
+
+#[cfg(test)]
+const BENCH_SIZE_LOG2: usize = 16;
+
+#[bench]
+fn bench_fft_zn_64(bencher: &mut Bencher) {
+    let ring = Zn::new(1073872897);
+    let fft = HEXLNTT::for_zn(ring.clone(), BENCH_SIZE_LOG2).unwrap();
+    let mut data = (0..(1 << BENCH_SIZE_LOG2)).map(|i| ring.int_hom().map(i)).collect::<Vec<_>>();
+    let mut ntt = Vec::with_capacity(1 << BENCH_SIZE_LOG2);
+    ntt.resize_with(1 << BENCH_SIZE_LOG2, || fft.ring().zero());
+    let mut inv_ntt = Vec::with_capacity(1 << BENCH_SIZE_LOG2);
+    inv_ntt.resize_with(1 << BENCH_SIZE_LOG2, || fft.ring().zero());
+    bencher.iter(|| {
+        run_fft_bench_round(&fft, &mut data, &mut ntt, &mut inv_ntt);
+    });
 }
