@@ -1,14 +1,12 @@
 use cpp::cpp;
 use feanor_math::divisibility::DivisibilityRingStore;
-use feanor_math::homomorphism::Homomorphism;
 use feanor_math::ring::{El, RingStore};
-use feanor_math::rings::zn::zn_64::{ZnBase, ZnEl};
+use feanor_math::rings::zn::zn_64::*;
 use feanor_math::rings::zn::{ZnRing, ZnRingStore};
 use feanor_math::rings::zn::zn_64::Zn;
 use feanor_math::algorithms::unity_root::{get_prim_root_of_unity_pow2, is_prim_root_of_unity_pow2};
 
 use std::ffi::c_void;
-use std::ops::DerefMut;
 
 cpp!{{
     #include "hexl/ntt/ntt.hpp"
@@ -107,6 +105,12 @@ impl HEXLNTT {
     }
 }
 
+impl PartialEq for HEXLNTT {
+    fn eq(&self, other: &Self) -> bool {
+        self.ring.get_ring() == other.ring.get_ring() && self.ring.eq_el(&self.root_of_unity, &other.root_of_unity)
+    }
+}
+
 impl Drop for HEXLNTT {
 
     fn drop(&mut self) {
@@ -119,6 +123,8 @@ impl Drop for HEXLNTT {
 use feanor_math::assert_el_eq;
 #[cfg(test)]
 use test::Bencher;
+#[cfg(test)]
+use feanor_math::homomorphism::Homomorphism;
 
 #[test]
 fn test_ntt() {
