@@ -4,6 +4,13 @@ version = "0.2.0"
 edition = "2021"
 build = "build.rs"
 
+repository = "https://github.com/FeanorTheElf/feanor-math-hexl"
+homepage = "https://github.com/FeanorTheElf/feanor-math-hexl"
+keywords = ["cryptography", "encryption", "fhe", "homomorphic", "hexl"]
+readme = "Readme.md"
+description = "A Rust wrapper for the Intel HEXL library."
+license = "MIT"
+
 [lib]
 crate-type = ["rlib"]
 bench = true
