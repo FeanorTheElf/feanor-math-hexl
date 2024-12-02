@@ -1,6 +1,6 @@
 [package]
 name = "feanor-math-hexl"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 build = "build.rs"
 
@@ -10,7 +10,7 @@ bench = true
 
 [dependencies]
 cpp = "0.5.9"
-feanor-math = { git = "https://github.com/feanortheelf/feanor-math.git", features = ["unstable-enable"] }
+feanor-math = { version = "3.0.1", features = ["unstable-enable"] }
 
 [build-dependencies]
 cpp_build = "0.5.9"
