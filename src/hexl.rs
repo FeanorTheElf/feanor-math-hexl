@@ -145,6 +145,16 @@ impl HEXLNegacyclicNTT {
     }
 }
 
+///
+/// The github page says that the "Intel HE Acceleration Library is single-threaded and thread-safe."
+/// 
+unsafe impl Send for HEXLNegacyclicNTT {}
+
+///
+/// The github page says that the "Intel HE Acceleration Library is single-threaded and thread-safe."
+/// 
+unsafe impl Sync for HEXLNegacyclicNTT {}
+
 impl PartialEq for HEXLNegacyclicNTT {
 
     fn eq(&self, other: &Self) -> bool {

@@ -17,7 +17,7 @@ bench = true
 
 [dependencies]
 cpp = "0.5.9"
-feanor-math = { version = "3.0.1", features = ["unstable-enable"] }
+feanor-math = { version = "3.0.5", features = ["unstable-enable"] }
 
 [build-dependencies]
 cpp_build = "0.5.9"
