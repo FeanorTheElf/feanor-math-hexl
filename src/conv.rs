@@ -60,6 +60,14 @@ impl<A> HEXLConvolution<A>
         &self.ring
     }
 
+    fn add_assign_elementwise_product(lhs: &[ZnEl], rhs: &[ZnEl], dst: &mut [ZnEl], ring: &Zn) {
+        assert_eq!(lhs.len(), rhs.len());
+        assert_eq!(lhs.len(), dst.len());
+        for i in 0..lhs.len() {
+            ring.add_assign(&mut dst[i], ring.mul_ref(&lhs[i], &rhs[i]));
+        }
+    }
+
     ///
     /// Computes the convolution, assuming that both `lhs` and `rhs` store the negacyclic NTTs
     /// of the same power-of-two length.
@@ -78,6 +86,23 @@ impl<A> HEXLConvolution<A>
         for i in 0..min(out.len(), 1 << log2_n) {
             self.ring.add_assign_ref(&mut out[i], &tmp[i]);
         }
+    }
+
+    fn un_and_redo_fft(&self, input: &[ZnEl], log2_n: usize) -> Vec<ZnEl, A> {
+        let log2_in_len = ZZ.abs_log2_ceil(&(input.len() as i64)).unwrap();
+        assert_eq!(input.len(), 1 << log2_in_len);
+        assert!(log2_in_len < log2_n);
+
+        let mut tmp1 = Vec::with_capacity_in(input.len(), self.allocator.clone());
+        tmp1.extend(input.iter().map(|x| self.ring.clone_el(x)));
+        let mut tmp2 = Vec::with_capacity_in(input.len(), &self.allocator);
+        tmp2.resize_with(input.len(), || self.ring.zero());
+        self.get_fft(log2_in_len).unordered_negacyclic_fft_base::<true>(&mut tmp1[..], &mut tmp2[..]);
+
+        tmp1.resize_with(1 << log2_n, || self.ring.zero());
+        tmp2.resize_with(1 << log2_n, || self.ring.zero());
+        self.get_fft(log2_n).unordered_negacyclic_fft_base::<false>(&mut tmp2[..], &mut tmp1[..]);
+        return tmp1;
     }
 
     fn get_fft<'a>(&'a self, log2_n: usize) -> &'a HEXLNegacyclicNTT {
@@ -134,7 +159,8 @@ pub struct PreparedConvolutionOperand<A = Global>
 const ZZ: StaticRing<i64> = StaticRing::<i64>::RING;
 
 impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
-    where A: Allocator + Clone
+    where A: Allocator + Clone,
+        A: 'static
 {
     type PreparedConvolutionOperand = PreparedConvolutionOperand<A>;
 
@@ -147,7 +173,10 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
 
     fn compute_convolution_lhs_prepared<S: RingStore<Type = ZnBase> + Copy, V: VectorView<El<Zn>>>(&self, lhs: &Self::PreparedConvolutionOperand, rhs: V, dst: &mut [El<Zn>], ring: S) {
         assert!(ring.get_ring() == self.ring.get_ring());
-        let log2_n = ZZ.abs_log2_ceil(&((lhs.len + rhs.len()) as i64)).unwrap();
+        let log2_lhs = ZZ.abs_log2_ceil(&(lhs.data.len() as i64)).unwrap();
+        assert_eq!(lhs.data.len(), 1 << log2_lhs);
+        let log2_n = ZZ.abs_log2_ceil(&((lhs.len + rhs.len()) as i64)).unwrap().max(log2_lhs);
+        assert!(log2_lhs <= log2_n);
         self.compute_convolution_prepared(lhs, &self.prepare_convolution_base(rhs, log2_n), dst, ring);
     }
 
@@ -159,20 +188,47 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         assert_eq!(1 << log2_rhs, rhs.data.len());
         match log2_lhs.cmp(&log2_rhs) {
             std::cmp::Ordering::Equal => self.compute_convolution_base(self.clone_prepared_operand(lhs), rhs, dst),
-            std::cmp::Ordering::Greater => self.compute_convolution_prepared(rhs, lhs, dst, ring),
-            std::cmp::Ordering::Less => {
-                // unfortunately, we have to un-and redo the NTT of one operand to get the same length for both
-                let mut tmp1 = Vec::with_capacity_in(lhs.data.len(), self.allocator.clone());
-                tmp1.extend(lhs.data.iter().map(|x| self.ring.clone_el(x)));
-                let mut tmp2 = Vec::with_capacity_in(lhs.data.len(), &self.allocator);
-                tmp2.resize_with(lhs.data.len(), || self.ring.zero());
-                self.get_fft(log2_lhs).unordered_negacyclic_fft_base::<true>(&mut tmp1[..], &mut tmp2[..]);
+            std::cmp::Ordering::Greater => self.compute_convolution_base(PreparedConvolutionOperand { data: self.un_and_redo_fft(&rhs.data, log2_lhs), len: rhs.len }, lhs, dst),
+            std::cmp::Ordering::Less => self.compute_convolution_base(PreparedConvolutionOperand { data: self.un_and_redo_fft(&lhs.data, log2_rhs), len: lhs.len }, rhs, dst)
+        }
+    }
 
-                tmp1.resize_with(1 << log2_rhs, || ring.zero());
-                tmp2.resize_with(1 << log2_rhs, || ring.zero());
-                self.get_fft(log2_rhs).unordered_negacyclic_fft_base::<false>(&mut tmp2[..], &mut tmp1[..]);
-                self.compute_convolution_base(PreparedConvolutionOperand { data: tmp1, len: lhs.len }, rhs, dst);
+    fn compute_convolution_inner_product_prepared<'a, S, I>(&self, values: I, dst: &mut [ZnEl], ring: S)
+        where S: RingStore<Type = ZnBase> + Copy, 
+            I: Iterator<Item = (&'a Self::PreparedConvolutionOperand, &'a Self::PreparedConvolutionOperand)>,
+            PreparedConvolutionOperand<A>: 'a
+    {
+        assert!(ring.get_ring() == self.ring.get_ring());
+        let mut values_it = values.peekable();
+        if values_it.peek().is_none() {
+            return;
+        }
+        let expected_len = values_it.peek().unwrap().0.data.len().max(values_it.peek().unwrap().1.data.len()) * 2;
+        let mut current_log2_len = ZZ.abs_log2_ceil(&(expected_len as i64)).unwrap();
+        assert_eq!(expected_len, 1 << current_log2_len);
+        let mut tmp1 = Vec::with_capacity_in(1 << current_log2_len, self.allocator.clone());
+        tmp1.resize_with(1 << current_log2_len, || ring.zero());
+        for (lhs, rhs) in values_it {
+            let lhs_log2_len = ZZ.abs_log2_ceil(&(lhs.data.len() as i64)).unwrap();
+            let rhs_log2_len = ZZ.abs_log2_ceil(&(rhs.data.len() as i64)).unwrap();
+            let new_log2_len = current_log2_len.max(lhs_log2_len).max(rhs_log2_len);
+            
+            if current_log2_len < new_log2_len {
+                tmp1 = self.un_and_redo_fft(&tmp1, new_log2_len);
+                current_log2_len = new_log2_len;
             }
+            match (lhs_log2_len < current_log2_len, rhs_log2_len < current_log2_len) {
+                (false, false) => Self::add_assign_elementwise_product(&lhs.data, &rhs.data, &mut tmp1, RingValue::from_ref(ring.get_ring())),
+                (true, false) => Self::add_assign_elementwise_product(&self.un_and_redo_fft(&lhs.data, new_log2_len), &rhs.data, &mut tmp1, RingValue::from_ref(ring.get_ring())),
+                (false, true) => Self::add_assign_elementwise_product(&lhs.data, &self.un_and_redo_fft(&rhs.data, new_log2_len), &mut tmp1, RingValue::from_ref(ring.get_ring())),
+                (true, true) => Self::add_assign_elementwise_product(&self.un_and_redo_fft(&lhs.data, new_log2_len), &self.un_and_redo_fft(&rhs.data, new_log2_len), &mut tmp1, RingValue::from_ref(ring.get_ring())),
+            }
+        }
+        let mut tmp2 = Vec::with_capacity_in(1 << current_log2_len, &self.allocator);
+        tmp2.resize_with(1 << current_log2_len, || self.ring.zero());
+        self.get_fft(current_log2_len).unordered_negacyclic_fft_base::<true>(&mut tmp1, &mut tmp2);
+        for i in 0..min(dst.len(), 1 << current_log2_len) {
+            self.ring.add_assign_ref(&mut dst[i], &tmp2[i]);
         }
     }
 }
@@ -225,6 +281,39 @@ fn test_convolution() {
             let rhs = (0..rhs_len).map(|i| ring.int_hom().map(16 * i)).collect::<Vec<_>>();
             let add = (0..(lhs_len + rhs_len)).map(|i| ring.int_hom().map(32768 * i)).collect::<Vec<_>>();
             check(&lhs, &rhs, &add);
+        }
+    }
+}
+
+#[test]
+fn test_convolution_inner_product() {
+    let ring = Zn::new(65537);
+    let convolutor = HEXLConvolution::new_with(ring, 15, Global);
+
+    for l1_len in [7, 8] {
+        for l2_len in [8, 9] {
+            for r1_len  in [5, 7] {
+                for r2_len in [4, 15] {
+                    let l1 = (0..l1_len).map(|i| ring.int_hom().map(i)).collect::<Vec<_>>();
+                    let l2 = (0..l2_len).map(|i| ring.int_hom().map(4 * i)).collect::<Vec<_>>();
+                    let r1 = (0..r1_len).map(|i| ring.int_hom().map(16 * i)).collect::<Vec<_>>();
+                    let r2 = (0..r2_len).map(|i| ring.int_hom().map(64 * i)).collect::<Vec<_>>();
+                    let mut expected = (0..32).map(|_| ring.zero()).collect::<Vec<_>>();
+                    STANDARD_CONVOLUTION.compute_convolution(&l1, &r1, &mut expected, ring);
+                    STANDARD_CONVOLUTION.compute_convolution(&l2, &r2, &mut expected, ring);
+                    let mut actual = (0..32).map(|_| ring.zero()).collect::<Vec<_>>();
+                    convolutor.compute_convolution_inner_product_prepared([
+                            (&convolutor.prepare_convolution_operand(l1, ring), &convolutor.prepare_convolution_operand(r1, ring)), 
+                            (&convolutor.prepare_convolution_operand(l2, ring), &convolutor.prepare_convolution_operand(r2, ring))
+                        ].into_iter(), 
+                        &mut actual, 
+                        ring
+                    );
+                    for i in 0..32 {
+                        assert_el_eq!(ring, expected[i], actual[i]);
+                    }
+                }
+            }
         }
     }
 }
