@@ -203,7 +203,7 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         if values_it.peek().is_none() {
             return;
         }
-        let expected_len = values_it.peek().unwrap().0.data.len().max(values_it.peek().unwrap().1.data.len()) * 2;
+        let expected_len = values_it.peek().unwrap().0.data.len().max(values_it.peek().unwrap().1.data.len());
         let mut current_log2_len = ZZ.abs_log2_ceil(&(expected_len as i64)).unwrap();
         assert_eq!(expected_len, 1 << current_log2_len);
         let mut tmp1 = Vec::with_capacity_in(1 << current_log2_len, self.allocator.clone());
@@ -288,9 +288,9 @@ fn test_convolution() {
 #[test]
 fn test_convolution_inner_product() {
     let ring = Zn::new(65537);
-    let convolutor = HEXLConvolution::new_with(ring, 15, Global);
+    let convolutor = HEXLConvolution::new_with(ring, 5, Global);
 
-    for l1_len in [7, 8] {
+    for l1_len in [7, 8, 13] {
         for l2_len in [8, 9] {
             for r1_len  in [5, 7] {
                 for r2_len in [4, 15] {

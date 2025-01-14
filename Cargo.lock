@@ -112,7 +112,7 @@ dependencies = [
 
 [[package]]
 name = "feanor-math-hexl"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "cpp",
  "cpp_build",
