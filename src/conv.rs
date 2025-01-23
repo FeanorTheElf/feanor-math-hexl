@@ -1,6 +1,8 @@
 use std::alloc::{Allocator, Global};
 use std::cmp::min;
 
+use tracing::instrument;
+
 use feanor_math::algorithms::convolution::*;
 use feanor_math::primitive_int::StaticRing;
 use feanor_math::ring::*;
@@ -60,6 +62,7 @@ impl<A> HEXLConvolution<A>
         &self.ring
     }
 
+    #[instrument(skip_all)]
     fn add_assign_elementwise_product(lhs: &[ZnEl], rhs: &[ZnEl], dst: &mut [ZnEl], ring: &Zn) {
         assert_eq!(lhs.len(), rhs.len());
         assert_eq!(lhs.len(), dst.len());
@@ -72,11 +75,13 @@ impl<A> HEXLConvolution<A>
     /// Computes the convolution, assuming that both `lhs` and `rhs` store the negacyclic NTTs
     /// of the same power-of-two length.
     /// 
+    #[instrument(skip_all)]
     fn compute_convolution_base(&self, mut lhs: PreparedConvolutionOperand<A>, rhs: &PreparedConvolutionOperand<A>, out: &mut [El<Zn>]) {
         let log2_n = ZZ.abs_log2_ceil(&(lhs.data.len() as i64)).unwrap();
         assert_eq!(lhs.data.len(), 1 << log2_n);
         assert_eq!(rhs.data.len(), 1 << log2_n);
         assert!(lhs.len + rhs.len <= 1 << log2_n);
+        assert!(out.len() >= lhs.len + rhs.len);
         for i in 0..(1 << log2_n) {
             self.ring.mul_assign_ref(&mut lhs.data[i], &rhs.data[i]);
         }
@@ -88,6 +93,7 @@ impl<A> HEXLConvolution<A>
         }
     }
 
+    #[instrument(skip_all)]
     fn un_and_redo_fft(&self, input: &[ZnEl], log2_n: usize) -> Vec<ZnEl, A> {
         let log2_in_len = ZZ.abs_log2_ceil(&(input.len() as i64)).unwrap();
         assert_eq!(input.len(), 1 << log2_in_len);
@@ -118,6 +124,7 @@ impl<A> HEXLConvolution<A>
         };
     }
     
+    #[instrument(skip_all)]
     fn prepare_convolution_base<V: VectorView<El<Zn>>>(&self, val: V, log2_n: usize) -> PreparedConvolutionOperand<A> {
         let mut input = Vec::with_capacity_in(1 << log2_n, &self.allocator);
         input.extend(val.as_iter().map(|x| self.ring.clone_el(x)));
@@ -140,6 +147,7 @@ impl<A> ConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         ring.get_ring() == self.ring.get_ring()
     }
 
+    #[instrument(skip_all)]
     fn compute_convolution<S: RingStore<Type = ZnBase> + Copy, V1: VectorView<<ZnBase as RingBase>::Element>, V2: VectorView<<ZnBase as RingBase>::Element>>(&self, lhs: V1, rhs: V2, dst: &mut [<ZnBase as RingBase>::Element], ring: S) {
         assert!(self.supports_ring(&ring));
         let log2_n = ZZ.abs_log2_ceil(&((lhs.len() + rhs.len()) as i64)).unwrap();
@@ -164,6 +172,7 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
 {
     type PreparedConvolutionOperand = PreparedConvolutionOperand<A>;
 
+    #[instrument(skip_all)]
     fn prepare_convolution_operand<S: RingStore<Type = ZnBase> + Copy, V: VectorView<El<Zn>>>(&self, val: V, ring: S) -> Self::PreparedConvolutionOperand {
         assert!(ring.get_ring() == self.ring.get_ring());
         let log2_n_in = ZZ.abs_log2_ceil(&(val.len() as i64)).unwrap();
@@ -171,6 +180,7 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         return self.prepare_convolution_base(val, log2_n_out);
     }
 
+    #[instrument(skip_all)]
     fn compute_convolution_lhs_prepared<S: RingStore<Type = ZnBase> + Copy, V: VectorView<El<Zn>>>(&self, lhs: &Self::PreparedConvolutionOperand, rhs: V, dst: &mut [El<Zn>], ring: S) {
         assert!(ring.get_ring() == self.ring.get_ring());
         let log2_lhs = ZZ.abs_log2_ceil(&(lhs.data.len() as i64)).unwrap();
@@ -180,6 +190,7 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         self.compute_convolution_prepared(lhs, &self.prepare_convolution_base(rhs, log2_n), dst, ring);
     }
 
+    #[instrument(skip_all)]
     fn compute_convolution_prepared<S: RingStore<Type = ZnBase> + Copy>(&self, lhs: &Self::PreparedConvolutionOperand, rhs: &Self::PreparedConvolutionOperand, dst: &mut [El<Zn>], ring: S) {
         assert!(ring.get_ring() == self.ring.get_ring());
         let log2_lhs = ZZ.abs_log2_ceil(&(lhs.data.len() as i64)).unwrap();
@@ -193,6 +204,7 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         }
     }
 
+    #[instrument(skip_all)]
     fn compute_convolution_inner_product_prepared<'a, S, I>(&self, values: I, dst: &mut [ZnEl], ring: S)
         where S: RingStore<Type = ZnBase> + Copy, 
             I: Iterator<Item = (&'a Self::PreparedConvolutionOperand, &'a Self::PreparedConvolutionOperand)>,
@@ -209,6 +221,7 @@ impl<A> PreparedConvolutionAlgorithm<ZnBase> for HEXLConvolution<A>
         let mut tmp1 = Vec::with_capacity_in(1 << current_log2_len, self.allocator.clone());
         tmp1.resize_with(1 << current_log2_len, || ring.zero());
         for (lhs, rhs) in values_it {
+            assert!(dst.len() >= lhs.len + rhs.len);
             let lhs_log2_len = ZZ.abs_log2_ceil(&(lhs.data.len() as i64)).unwrap();
             let rhs_log2_len = ZZ.abs_log2_ceil(&(rhs.data.len() as i64)).unwrap();
             let new_log2_len = current_log2_len.max(lhs_log2_len).max(rhs_log2_len);

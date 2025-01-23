@@ -1,4 +1,7 @@
 use cpp::cpp;
+
+use tracing::instrument;
+
 use feanor_math::algorithms::fft::cooley_tuckey::bitreverse;
 use feanor_math::divisibility::DivisibilityRingStore;
 use feanor_math::ring::{El, RingStore};
@@ -59,6 +62,7 @@ impl HEXLNegacyclicNTT {
     /// where `j` is a unit in `Z/2nZ`. This is different from the convention in hexl, where the forward transform
     /// uses `𝝵` and not `𝝵^-1`.
     /// 
+    #[instrument(skip_all)]
     pub fn new(ring: Zn, log2_n: usize, root_of_unity: El<Zn>) -> Self {
         assert!(is_prim_root_of_unity_pow2(ring, &root_of_unity, log2_n + 1));
         let q: u64 = *ring.modulus() as u64;
@@ -68,6 +72,7 @@ impl HEXLNegacyclicNTT {
         HEXLNegacyclicNTT { data: pointer, ring: ring, log2_n: log2_n, root_of_unity: root_of_unity }
     }
 
+    #[instrument(skip_all)]
     pub fn for_zn(ring: Zn, log2_n: usize) -> Option<Self> {
         let as_field = (&ring).as_field().ok().unwrap();
         let root_of_unity = as_field.get_ring().unwrap_element(get_prim_root_of_unity_pow2(as_field, log2_n + 1)?);
@@ -94,6 +99,7 @@ impl HEXLNegacyclicNTT {
     ///
     /// The elements of input won't change their value, but might be reduced in-place.
     /// 
+    #[instrument(skip_all)]
     pub fn unordered_negacyclic_fft_base<const INV: bool>(&self, input: &mut [ZnEl], output: &mut [ZnEl]) {
         assert_eq!(1 << self.log2_n, input.len());
         assert_eq!(1 << self.log2_n, output.len());

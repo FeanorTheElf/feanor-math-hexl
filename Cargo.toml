@@ -1,6 +1,6 @@
 [package]
 name = "feanor-math-hexl"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2021"
 build = "build.rs"
 
@@ -18,6 +18,7 @@ bench = true
 [dependencies]
 cpp = "0.5.9"
 feanor-math = { version = "3.0.7", features = ["unstable-enable"] }
+tracing = "0.1.41"
 
 [build-dependencies]
 cpp_build = "0.5.9"
