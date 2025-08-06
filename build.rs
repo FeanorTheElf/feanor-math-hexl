@@ -39,9 +39,12 @@ fn find_hexl() -> HEXLLocation {
 }
 
 fn main() {
-    let hexl_location = find_hexl();
-    cpp_build::Config::new().include(hexl_location.include_dir).build("src/lib.rs");
-    println!("cargo:rustc-link-search={}", hexl_location.lib_dir.display());
-    println!("cargo:rustc-link-lib=hexl");
-    println!("cargo:rerun-if-changed=src/hexl.rs")
+    // don't try to actually link HEXL when building documentation
+    if std::env::var("DOCS_RS").is_err() {
+        let hexl_location = find_hexl();
+        cpp_build::Config::new().include(hexl_location.include_dir).build("src/lib.rs");
+        println!("cargo:rustc-link-search={}", hexl_location.lib_dir.display());
+        println!("cargo:rustc-link-lib=hexl");
+        println!("cargo:rerun-if-changed=src/hexl.rs");
+    }
 }
