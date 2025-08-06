@@ -17,7 +17,7 @@ bench = true
 
 [dependencies]
 cpp = "0.5.9"
-feanor-math = { version = "3.0.7", features = ["unstable-enable"] }
+feanor-math = { version = "3.4.3", features = ["unstable-enable", "generic_tests"] }
 tracing = "0.1.41"
 
 [build-dependencies]
